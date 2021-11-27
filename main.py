@@ -113,8 +113,8 @@ def main():
 
     train_lst = get_all_data_paths(os.path.join(root_data_path, 'train'))
     val_lst = get_all_data_paths(os.path.join(root_data_path, 'val'))
-    train_dataset = PathDataset(train_lst[:100], partial(process_data, imagesize))
-    val_dataset = PathDataset(val_lst[:100], partial(process_data, imagesize))
+    train_dataset = PathDataset(train_lst, partial(process_data, imagesize))
+    val_dataset = PathDataset(val_lst, partial(process_data, imagesize))
     params = {
         'batch_size': batchsize,
         'shuffle': True,
