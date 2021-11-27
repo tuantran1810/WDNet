@@ -156,6 +156,9 @@ class WDNet(object):
                     writer.add_scalar('image/i_watermark2_loss', i_watermark2_loss, iter_all)
                     writer.add_scalar('vgg/vgg_loss', vgg_loss, iter_all)
 
+                if ((i+1)%200) == 0:
+                    self.save_sample('train', epoch, i, (y_, mask, alpha, w, x_), (g_, g_mask, g_alpha, g_w, i_watermark))
+
             print(f"done training for epoch {epoch}, saving model...")
             self.save(epoch)
 
@@ -197,14 +200,14 @@ class WDNet(object):
                     writer.add_scalar('eval/vgg_loss', vgg_loss, epoch)
 
                 if i < self.eval_samples_to_save:
-                    self.save_sample(epoch, i, (y_, mask, alpha, w, y_), (g_, g_mask, g_alpha, g_w, i_watermark))
+                    self.save_sample('eval', epoch, i, (y_, mask, alpha, w, y_), (g_, g_mask, g_alpha, g_w, i_watermark))
 
             print(f"done evaluation for epoch {epoch}")
             print('='*50)
 
-    def save_sample(self, epoch, idx, x, y):
+    def save_sample(self, folder, epoch, idx, x, y):
         fmt = 'epoch_%d'
-        folder = os.path.join(self.root_save_dir, 'eval_data', fmt%epoch)
+        folder = os.path.join(self.root_save_dir, folder, fmt%epoch)
         pathlib.Path(folder).mkdir(parents=True, exist_ok=True)
         filename_fmt = '%d.jpg'
         x_arr = list()
