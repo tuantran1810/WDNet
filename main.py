@@ -1,115 +1,142 @@
-import argparse, os, torch
-#from GAN import GAN
+import os, torch
 from WDNet import WDNet
-#from LSGAN import LSGAN
-#from DRAGAN import DRAGAN
-#from ACGAN import ACGAN
-#from WGAN import WGAN
-#from WGAN_GP import WGAN_GP
-#from infoGAN import infoGAN
-#from EBGAN import EBGAN
-#from BEGAN import BEGAN
+from dataset import PathDataset
+from torch.utils.data import DataLoader
+import pickle
+import numpy as np
+from PIL import Image
+import io
+import cv2
+from functools import partial
 
-"""parsing and configuration"""
-def parse_args():
-    desc = "Pytorch implementation of GAN collections"
-    parser = argparse.ArgumentParser(description=desc)
+def get_all_data_paths(path):
+	lst = list()
+	for file_name in os.listdir(path):
+		segments = file_name.split('.')
+		if segments[1] != 'pkl':
+			continue
+		lst.append(os.path.join(path, file_name))
+	return lst
 
-    parser.add_argument('--gan_type', type=str, default='CGAN',
-                        choices=['GAN', 'CGAN', 'infoGAN', 'ACGAN', 'EBGAN', 'BEGAN', 'WGAN', 'WGAN_GP', 'DRAGAN', 'LSGAN'],
-                        help='The type of GAN')
-    parser.add_argument('--dataset', type=str, default='mnist', choices=['mnist', 'fashion-mnist', 'cifar10', 'cifar100', 'svhn', 'stl10', 'lsun-bed'],
-                        help='The name of dataset')
-    parser.add_argument('--split', type=str, default='', help='The split flag for svhn and stl10')
-    parser.add_argument('--epoch', type=int, default=50, help='The number of epochs to run')
-    parser.add_argument('--batch_size', type=int, default=64, help='The size of batch')
-    parser.add_argument('--input_size', type=int, default=28, help='The size of input image')
-    parser.add_argument('--save_dir', type=str, default='models',
-                        help='Directory name to save the model')
-    parser.add_argument('--result_dir', type=str, default='results', help='Directory name to save the generated images')
-    parser.add_argument('--log_dir', type=str, default='logs', help='Directory name to save training logs')
-    parser.add_argument('--lrG', type=float, default=0.0002)
-    parser.add_argument('--lrD', type=float, default=0.0002)
-    parser.add_argument('--beta1', type=float, default=0.5)
-    parser.add_argument('--beta2', type=float, default=0.999)
-    parser.add_argument('--gpu_mode', type=bool, default=True)
-    parser.add_argument('--benchmark_mode', type=bool, default=True)
-    parser.add_argument('--gpu', type=str, default='0')
-    return check_args(parser.parse_args())
+def _process_data_file(fd, imagesize):
+    data = pickle.load(fd)
 
-"""checking arguments"""
-def check_args(args):
-    # --save_dir
-    if not os.path.exists(args.save_dir):
-        os.makedirs(args.save_dir)
+    alpha = data['alpha']
+    mask = np.unpackbits(data['mask']).reshape(imagesize, imagesize)
+    balanced_mask = np.unpackbits(data['balanced_mask']).reshape(imagesize, imagesize)
 
-    # --result_dir
-    if not os.path.exists(args.result_dir):
-        os.makedirs(args.result_dir)
+    mask = mask*1.0
+    alpha_mask = mask*alpha
+    balanced_mask = balanced_mask*1.0
 
-    # --result_dir
-    if not os.path.exists(args.log_dir):
-        os.makedirs(args.log_dir)
+    mask = np.expand_dims(mask, axis=2)
+    alpha_mask = np.expand_dims(alpha_mask, axis=2)
+    balanced_mask = np.expand_dims(balanced_mask, axis=2)
+    plain_image = np.array(Image.open(io.BytesIO(data['plain_image_bytes'])))/255.0
+    watermarked_image = np.array(Image.open(io.BytesIO(data['watermarked_image_bytes'])))/255.0
+    watermark_on_image = np.array(Image.open(io.BytesIO(data['watermark_on_image_bytes'])))/255.0
 
-    # --epoch
-    try:
-        assert args.epoch >= 1
-    except:
-        print('number of epochs must be larger than or equal to one')
+    mask = np.transpose(mask, (2,0,1))
+    alpha_mask = np.transpose(alpha_mask, (2,0,1))
+    balanced_mask = np.transpose(balanced_mask, (2,0,1))
+    plain_image = np.transpose(plain_image, (2,0,1))
+    watermarked_image = np.transpose(watermarked_image, (2,0,1))
+    watermark_on_image = np.transpose(watermark_on_image, (2,0,1))
 
-    # --batch_size
-    try:
-        assert args.batch_size >= 1
-    except:
-        print('batch size must be larger than or equal to one')
+    output = {
+        'plain_image': torch.from_numpy(plain_image).float(),
+        'watermarked_image': torch.from_numpy(watermarked_image).float(),
+        'watermark_on_image': torch.from_numpy(watermark_on_image).float(),
+        'alpha': data['alpha'],
+        'mask': torch.from_numpy(mask).float(),
+        'alpha_mask': torch.from_numpy(alpha_mask).float(),
+        'balanced_mask': torch.from_numpy(balanced_mask).float(),
+    }
+    return output
 
-    return args
+def process_data(imagesize, fd):
+    out = _process_data_file(fd, imagesize)
+    return (
+        out['watermarked_image'],
+        out['plain_image'],
+        out['mask'],
+        out['balanced_mask'],
+        out['alpha_mask'],
+        out['watermark_on_image'],
+    )
 
-"""main"""
+def get_config():
+    config = dict()
+
+    default_root_data_path = '/media/tuantran/rapid-data/chotot_watermark_removal'
+    root_data_path = os.getenv('LMR_ROOT_DATA_PATH')
+    root_data_path = root_data_path if root_data_path is not None else default_root_data_path
+    config['root_data_path'] = root_data_path
+
+    default_output_path = "./output"
+    output_path = os.getenv('LMR_OUTPUT_PATH')
+    output_path = output_path if output_path is not None else default_output_path
+    config['output_path'] = output_path
+
+    default_log_path = "./log"
+    log_path = os.getenv('LMR_LOG_PATH')
+    log_path = log_path if log_path is not None else default_log_path
+    config['log_path'] = log_path
+
+    default_epochs = 20
+    epochs = os.getenv('LMR_EPOCHS')
+    epochs = int(epochs) if epochs is not None else default_epochs
+    config['epochs'] = epochs
+
+    default_epoch_offset = 1
+    epoch_offset = os.getenv('LMR_EPOCH_OFFSET')
+    epoch_offset = int(epoch_offset) if epoch_offset is not None else default_epoch_offset
+    config['epoch_offset'] = epoch_offset
+
+    default_batchsize = 3
+    batchsize = os.getenv('LMR_BATCHSIZE')
+    batchsize = int(batchsize) if batchsize is not None else default_batchsize
+    config['batchsize'] = batchsize
+
+    default_imagesize = 480
+    imagesize = os.getenv('LMR_IMAGESIZE')
+    imagesize = int(imagesize) if imagesize is not None else default_imagesize
+    config['imagesize'] = imagesize
+
+    return config
+
 def main():
-    # parse arguments
-    args = parse_args()
-    if args is None:
-        exit()
+    config = get_config()
+    imagesize = config['imagesize']
+    root_data_path = config['root_data_path']
+    batchsize = config['batchsize']
 
-    if args.benchmark_mode:
-        torch.backends.cudnn.benchmark = True
-    os.environ["CUDA_VISIBLE_DEVICES"] =  args.gpu
-        # declare instance for GAN
-    '''
-    if args.gan_type == 'GAN':
-        gan = GAN(args)
-    elif args.gan_type == 'CGAN':
-        gan = CGAN(args)
-    elif args.gan_type == 'ACGAN':
-        gan = ACGAN(args)
-    elif args.gan_type == 'infoGAN':
-        gan = infoGAN(args, SUPERVISED=False)
-    elif args.gan_type == 'EBGAN':
-        gan = EBGAN(args)
-    elif args.gan_type == 'WGAN':
-        gan = WGAN(args)
-    elif args.gan_type == 'WGAN_GP':
-        gan = WGAN_GP(args)
-    elif args.gan_type == 'DRAGAN':
-        gan = DRAGAN(args)
-    elif args.gan_type == 'LSGAN':
-        gan = LSGAN(args)
-    elif args.gan_type == 'BEGAN':
-        gan = BEGAN(args)
-    '''
-    if args.gan_type == 'CGAN':
-        gan = WDNet(args)
-    else:
-        raise Exception("[!] There is no option for " + args.gan_type)
+    train_lst = get_all_data_paths(os.path.join(root_data_path, 'train'))
+    val_lst = get_all_data_paths(os.path.join(root_data_path, 'val'))
+    train_dataset = PathDataset(train_lst[:100], partial(process_data, imagesize))
+    val_dataset = PathDataset(val_lst[:100], partial(process_data, imagesize))
+    params = {
+        'batch_size': batchsize,
+        'shuffle': True,
+        'num_workers': 4,
+        'drop_last': True,
+    }
+    train_dataloader, val_dataloader = DataLoader(train_dataset, **params), DataLoader(val_dataset, **params)
 
-        # launch the graph in a session
+    net_params = {
+        'epochs': config['epochs'],
+        'epoch_offset': config['epoch_offset'],
+        'root_save_dir': config['output_path'],
+        'log_dir': config['log_path'],
+    }
+
+    gan = WDNet(
+        train_dataloader,
+        val_dataloader,
+        **net_params,
+    )
+
     gan.train()
-    print(" [*] Training finished!")
-
-    # visualize learned generator
-    gan.visualize_results(args.epoch)
-    print(" [*] Testing finished!")
 
 if __name__ == '__main__':
     main()

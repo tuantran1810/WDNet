@@ -1,112 +1,179 @@
 import random
-from torch.utils.data import DataLoader
-from torchvision import datasets, transforms
 from PIL import Image
 import numpy as np
-import cv2
 import os.path as osp
 import os
 import sys
-import torch
-#from compiler.ast import flatten
-CUDA_VISIBLE_DEVICES=3
-mark='train'
-root_logo = './CLWD/watermark_logo/white/'
-root_dataset='./pascal_data/train/VOC2012/JPEGImages/'
-root_train='./CLWD/'
-img_ids=list()
-img_path=osp.join(root_dataset,'%s.jpg')
-img_source_path=osp.join(root_train,mark,'Watermarked_image','%s.jpg')
-img_target_path=osp.join(root_train,mark,'Watermark_free_image','%s.jpg')
-balance_path=osp.join(root_train,mark,'Loss_balance','%s.png')
-mask_path=osp.join(root_train,mark,'Mask','%s.png')
-alpha_path=osp.join(root_train,mark,'Alpha','%s.png')
-W_path=osp.join(root_train,mark,'Watermark','%s.png')
-logo_path=osp.join(root_logo,mark,'%s.png')
-for file in os.listdir(root_dataset):
-	img_ids.append(file.strip('.jpg'))
-def solve_mask(img,img_target):
-	img1=np.asarray(img.permute(1,2,0).cpu())
-	#print(img1)
-	img2=np.asarray(img_target.permute(1,2,0).cpu())
-	#print(img2)
-	img3=abs(img1-img2)
-	#print(img3)
-	mask=img3.sum(2)>(15.0/255.0)
-	mask=mask.astype(int)
-	#print('oooooooooooooooooooooo')
-	#print(mask)
-	return mask
+import io
+import multiprocessing as mp
+import pickle
+import pathlib
+from sklearn.model_selection import train_test_split
+
+train_samples = 80000
+val_samples = 5000
+test_samples = 5000
+image_size = 480
+logo_default_width = 240
+root_logo = '/media/tuantran/raid-data/dataset/chotot/chotot_logo'
+root_dataset = '/media/tuantran/raid-data/dataset/chotot/chotot_images/images'
+output_path = '/media/tuantran/rapid-data/chotot_watermark_removal'
+
+img_path = osp.join(root_dataset,'%s.jpg')
+logo_path = osp.join(root_logo, '%s.png')
+output_path_fmt = osp.join(output_path, '%s', '%s.pkl')
+
+
+def get_all_image_ids():
+	img_ids=list()
+	for file_name in os.listdir(root_dataset):
+		segments = file_name.split('.')
+		if segments[1] != 'jpg':
+			continue
+		img_ids.append(segments[0])
+	return img_ids
+
+def get_all_logos():
+	logo_images = dict()
+	for file_name in os.listdir(root_logo):
+		segments = file_name.split('.')
+		if segments[1] != 'png':
+			continue
+		logo_id = segments[0]
+		logo_image = Image.open(logo_path%logo_id)
+		w, h = logo_image.size
+		logo_image = logo_image.resize((logo_default_width, int(logo_default_width*h/w)))
+		logo_image = logo_image.convert('RGBA')
+		logo_images[logo_id] = logo_image
+	return logo_images
+
+img_ids = get_all_image_ids()
+logo_images = get_all_logos()
+
 def solve_balance(mask):
 	height,width=mask.shape
-	k=mask.sum()
-	#print(k)
-	k=(int)(k)
-
-	mask2=(1.0-mask)*np.random.rand(height,width)
-	mask2=mask2.flatten()
-	pos=np.argsort(mask2)
-	balance=np.zeros(height*width)
-	balance[pos[:min(250*250,4*k)]]=1
-	balance=balance.reshape(height,width)
+	k = mask.sum()
+	k = (int)(k)
+	mask2 = (1.0-mask)*np.random.rand(height,width)
+	mask2 = mask2.flatten()
+	pos = np.argsort(mask2)
+	balance = np.zeros(height*width, dtype=bool)
+	balance[pos[:4*k]] = True
+	balance = balance.reshape(height,width)
 	return balance
-i=(int)(0)
-while i<60000:
-	for id in img_ids:
-		print(i)
-		if i>=60000:
-			break
-		img=Image.open(img_path%id)
-		logo_id=str(random.randint(0,63)).zfill(3)
-		logo=Image.open(logo_path%logo_id)
-		logo = logo.convert('RGBA')
-		img_height,img_width=img.size
-		img=img.resize((256,256))
-		save_id=str(i+1)
-		img.save(img_target_path%save_id)#save target image
-		
-		rotate_angle=random.randint(0,360)
-		logo_rotate=logo.rotate(rotate_angle,expand = True)
-		logo_height,logo_width=logo_rotate.size
-		logo_height=random.randint(10,256)
-		logo_width=random.randint(10,256)
-		logo_resize=logo_rotate.resize((logo_height,logo_width))
-		transform_totensor=transforms.Compose([transforms.ToTensor()])
-		#print(logo_resize.size)
-		img=transform_totensor(img)
-		logo=transform_totensor(logo_resize)
-		img=img.cuda()
-		logo=logo.cuda()
-		alpha=random.random()*0.4+0.3
-		start_height=random.randint(0,256-logo_height)
-		start_width=random.randint(0,256-logo_width)
-		W=torch.zeros_like(img)
-		img_target=img.clone()
-		#print(img.shape)
-		#print(logo.shape)
-		#print(logo_width)
-		#print(logo_height)
-		img[:,start_width:start_width+logo_width,start_height:start_height+logo_height]=img[:,start_width:start_width+logo_width,start_height:start_height+logo_height]*(1.0-alpha*logo[3:4,:,:])+logo[:3,:,:]*alpha*logo[3:4,:,:]
-		
-		mask=solve_mask(img,img_target)
-		#print(mask)
-		cv2.imwrite(mask_path%save_id,np.concatenate((mask[:,:,np.newaxis],mask[:,:,np.newaxis],mask[:,:,np.newaxis]),2)*256.0)
-		balance=solve_balance(mask)
-		cv2.imwrite(balance_path%save_id,np.concatenate((balance[:,:,np.newaxis],balance[:,:,np.newaxis],balance[:,:,np.newaxis]),2)*256.0)
 
-		W[:,start_width:logo_width+start_width,start_height:start_height+logo_height]+=logo[:3,:,:]
-		img=transforms.ToPILImage()(img.cpu()).convert('RGB')
-		#mask=transforms.ToPILImage()(mask).convert('RGB')
-		W=transforms.ToPILImage()(W.cpu()).convert('RGB')
-		balance=solve_balance(mask)
+def save_image_file(idx, plain_image, watermarked_image, watermark_on_image, alpha, mask, balanced_mask, folder):
+	def jpeg_byte_array(img):
+		img_byte_arr = io.BytesIO()
+		img.save(img_byte_arr, format='JPEG')
+		img_byte_arr = img_byte_arr.getvalue()
+		return img_byte_arr
 
-		#balance=transforms.ToPILImage()(balance).convert('RGB')
-		img.save(img_source_path%save_id)
-		#mask.save(mask_path%save_id)
+	plain_image_bytes = jpeg_byte_array(plain_image)
+	watermarked_image_bytes = jpeg_byte_array(watermarked_image)
+	watermark_on_image_bytes = jpeg_byte_array(watermark_on_image)
+	data = {
+		"id": idx,
+		"plain_image_bytes": plain_image_bytes,
+		"watermarked_image_bytes": watermarked_image_bytes,
+		"watermark_on_image_bytes": watermark_on_image_bytes,
+		"alpha": alpha,
+		"mask": np.packbits(mask),
+		"balanced_mask": np.packbits(balanced_mask),
+	}
 
-		alpha=alpha*mask
-		cv2.imwrite(alpha_path%save_id,np.concatenate((alpha[:,:,np.newaxis],alpha[:,:,np.newaxis],alpha[:,:,np.newaxis]),2)*256.0)
-		
-		W.save(W_path%save_id)
-		#balance.save(balance_path%save_id)
-		i=i+1
+	with open(output_path_fmt%(folder, idx), 'wb') as fd:
+		pickle.dump(data, fd)
+
+def process_and_save(idx, image_id, logo_id, logo_size_ratio, logo_angle, alpha, folder):
+	image_w, image_h = image_size, image_size
+	plain_image = Image.open(img_path%image_id)
+	plain_image = plain_image.resize((image_w, image_h))
+
+	logo = logo_images[logo_id]
+	logo_w, logo_h = logo.size
+	logo_w, logo_h = int(logo_w*logo_size_ratio), int(logo_h*logo_size_ratio)
+	logo = logo.resize((logo_w, logo_h))
+	logo_rotate = logo.rotate(logo_angle, expand = True)
+
+	logo_w, logo_h = logo_rotate.size
+	logo_start_w = random.randint(0, image_w-logo_w)
+	logo_start_h = random.randint(0, image_h-logo_h)
+	logo_end_w = logo_start_w + logo_w
+	logo_end_h = logo_start_h + logo_h
+
+	logo_rotate_np = np.array(logo_rotate)
+	watermarked_image = np.array(plain_image)
+	logo_mask = logo_rotate_np[:,:,3:4] > (15.0/255.0)
+	watermarked_image[logo_start_h:logo_end_h, logo_start_w:logo_end_w, :] = \
+		watermarked_image[logo_start_h:logo_end_h, logo_start_w:logo_end_w, :]*(1.0-alpha*logo_mask) + logo_rotate_np[:,:,:3]*alpha*logo_mask
+	watermarked_image = np.uint8(watermarked_image)
+	
+	mask = np.zeros((image_w, image_h), dtype=bool)
+	mask[logo_start_h:logo_end_h, logo_start_w:logo_end_w] = logo_mask[:,:,0]
+
+	balanced_mask = solve_balance(mask)
+
+	logo_rotate = logo_rotate.convert('RGB')
+	logo_rotate_np = np.array(logo_rotate)
+	watermark_on_image = np.zeros_like(watermarked_image)
+	watermark_on_image[logo_start_h:logo_end_h, logo_start_w:logo_end_w, :] = logo_rotate_np
+	
+	data = {
+		"idx": idx,
+		"plain_image": plain_image,
+		"watermarked_image": Image.fromarray(watermarked_image),
+		"watermark_on_image": Image.fromarray(watermark_on_image),
+		"alpha": alpha,
+		"mask": mask,
+		"balanced_mask": balanced_mask,
+		"folder": folder,
+	}
+	save_image_file(**data)
+
+
+def wrapper(mp):
+	process_and_save(**mp)
+
+def main():
+	i = 0
+	tasks = list()
+	sample_size = train_samples + val_samples + test_samples
+	logo_list = [k for k in logo_images.keys()]
+	while i < sample_size:
+		for img_id in img_ids:
+			if i >= sample_size:
+				break
+			logo_id = random.choice(logo_list)
+			logo_size_ratio = random.uniform(0.2, 1)
+			logo_angle = random.randint(-45,45)
+			tasks.append({
+				'idx': i,
+				'image_id': img_id,
+				'logo_id': logo_id,
+				'logo_size_ratio': logo_size_ratio,
+				'logo_angle': logo_angle,
+				'alpha': random.random()*0.4 + 0.3,
+			})
+			i += 1
+
+	train, tmp = train_test_split(tasks, test_size=val_samples+test_samples)
+	test, val = train_test_split(tmp, test_size=test_samples)
+
+	for i in range(len(train)):
+		train[i]['folder'] = 'train'
+	for i in range(len(val)):
+		val[i]['folder'] = 'val'
+	for i in range(len(test)):
+		test[i]['folder'] = 'test'
+	tasks = train + val + test
+
+	pathlib.Path(osp.join(output_path, 'train')).mkdir(parents=True, exist_ok=True)
+	pathlib.Path(osp.join(output_path, 'val')).mkdir(parents=True, exist_ok=True)
+	pathlib.Path(osp.join(output_path, 'test')).mkdir(parents=True, exist_ok=True)
+
+	pool = mp.Pool(processes=6)
+	pool.map(wrapper, tasks)
+
+if __name__ == "__main__":
+	main()
