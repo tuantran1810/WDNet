@@ -71,8 +71,11 @@ class WDNet(object):
             elif isinstance(m, nn.BatchNorm2d):
                 nn.init.normal_(m.weight.data, 1.0, 0.02)
                 nn.init.constant_(m.bias.data, 0)
-        self.g.apply(weight_init)
-        self.d.apply(weight_init)
+        if epoch_offset == 1:
+            self.g.apply(weight_init)
+            self.d.apply(weight_init)
+        elif epoch_offset < 1:
+            raise Exception("epoch_offset < 1")
 
     def do_logging(self):
         now = time.time()
@@ -200,7 +203,7 @@ class WDNet(object):
                     writer.add_scalar('eval/vgg_loss', vgg_loss, epoch)
 
                 if i < self.eval_samples_to_save:
-                    self.save_sample('eval', epoch, i, (y_, mask, alpha, w, y_), (g_, g_mask, g_alpha, g_w, i_watermark))
+                    self.save_sample('eval', epoch, i, (y_, mask, alpha, w, x_), (g_, g_mask, g_alpha, g_w, i_watermark))
 
             print(f"done evaluation for epoch {epoch}")
             print('='*50)
