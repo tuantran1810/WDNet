@@ -25,4 +25,6 @@ class ArrayDataset(Dataset):
 
     def __getitem__(self, index):
         data = self.__data[index]
+        if self.__post_processing is None:
+            return data
         return self.__post_processing(data)

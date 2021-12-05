@@ -11,10 +11,9 @@ import pathlib
 from sklearn.model_selection import train_test_split
 
 train_samples = 80000
-val_samples = 5000
-test_samples = 5000
-image_size = 480
-logo_default_width = 240
+val_samples = 2000
+test_samples = 2000
+image_size = 256
 root_logo = '/media/tuantran/raid-data/dataset/chotot/chotot_logo'
 root_dataset = '/media/tuantran/raid-data/dataset/chotot/chotot_images/images'
 output_path = '/media/tuantran/rapid-data/chotot_watermark_removal'
@@ -42,7 +41,6 @@ def get_all_logos():
 		logo_id = segments[0]
 		logo_image = Image.open(logo_path%logo_id)
 		w, h = logo_image.size
-		logo_image = logo_image.resize((logo_default_width, int(logo_default_width*h/w)))
 		logo_image = logo_image.convert('RGBA')
 		logo_images[logo_id] = logo_image
 	return logo_images
@@ -58,14 +56,14 @@ def solve_balance(mask):
 	mask2 = mask2.flatten()
 	pos = np.argsort(mask2)
 	balance = np.zeros(height*width, dtype=bool)
-	balance[pos[:4*k]] = True
+	balance[pos[:min(250*250,4*k)]] = True
 	balance = balance.reshape(height,width)
 	return balance
 
 def save_image_file(idx, plain_image, watermarked_image, watermark_on_image, alpha, mask, balanced_mask, folder):
 	def jpeg_byte_array(img):
 		img_byte_arr = io.BytesIO()
-		img.save(img_byte_arr, format='JPEG')
+		img.save(img_byte_arr, format='PNG')
 		img_byte_arr = img_byte_arr.getvalue()
 		return img_byte_arr
 
@@ -85,18 +83,19 @@ def save_image_file(idx, plain_image, watermarked_image, watermark_on_image, alp
 	with open(output_path_fmt%(folder, idx), 'wb') as fd:
 		pickle.dump(data, fd)
 
-def process_and_save(idx, image_id, logo_id, logo_size_ratio, logo_angle, alpha, folder):
+def process_and_save(idx, image_id, logo_id, folder):
 	image_w, image_h = image_size, image_size
 	plain_image = Image.open(img_path%image_id)
 	plain_image = plain_image.resize((image_w, image_h))
 
+	alpha = random.random()*0.3 + 0.2
+	logo_angle = random.randint(0,360)
 	logo = logo_images[logo_id]
-	logo_w, logo_h = logo.size
-	logo_w, logo_h = int(logo_w*logo_size_ratio), int(logo_h*logo_size_ratio)
-	logo = logo.resize((logo_w, logo_h))
 	logo_rotate = logo.rotate(logo_angle, expand = True)
 
-	logo_w, logo_h = logo_rotate.size
+	logo_w, logo_h = random.randint(10,image_size), random.randint(10,image_size)
+	logo_rotate = logo_rotate.resize((logo_w, logo_h))
+
 	logo_start_w = random.randint(0, image_w-logo_w)
 	logo_start_h = random.randint(0, image_h-logo_h)
 	logo_end_w = logo_start_w + logo_w
@@ -151,9 +150,6 @@ def main():
 				'idx': i,
 				'image_id': img_id,
 				'logo_id': logo_id,
-				'logo_size_ratio': logo_size_ratio,
-				'logo_angle': logo_angle,
-				'alpha': random.random()*0.4 + 0.3,
 			})
 			i += 1
 

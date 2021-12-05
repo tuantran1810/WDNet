@@ -7,8 +7,8 @@ import sys
 import pickle
 import matplotlib.pyplot as plt
 
-image_size = 480
-root_path = '/media/tuantran/rapid-data/chotot_watermark_removal'
+image_size = 256
+root_path = '/media/tuantran/rapid-data/chotot_watermark_removal_train'
 
 
 def get_all_data_paths(path):
@@ -62,8 +62,8 @@ def main():
         alpha_mask = data['alpha_mask']
         balanced_mask = data['balanced_mask']
 
-        tmp1 = np.concatenate([plain_image, watermarked_image], axis=0)
-        tmp2 = np.concatenate([watermark_on_image, alpha_mask], axis=0)
+        tmp1 = np.concatenate([plain_image, watermarked_image, mask], axis=0)
+        tmp2 = np.concatenate([watermark_on_image, alpha_mask, balanced_mask], axis=0)
         tmp3 = np.concatenate([tmp1, tmp2], axis=1)
         plt.figure()
         plt.imshow(tmp3)

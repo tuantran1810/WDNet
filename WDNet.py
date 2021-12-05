@@ -18,16 +18,18 @@ class WDNet(object):
         self,
         train_data_loader,
         val_data_loader,
+        test_data_loader,
         epochs=20,
         epoch_offset=1,
         root_save_dir='./output',
         log_dir='./log',
         gpu_mode=True,
-        lr=0.0002,
+        lr=0.000002,
         beta1=0.5,
-        beta2=0.9,
+        beta2=0.999,
         log_interval_second=10,
-        eval_samples_to_save=100,
+        eval_samples_to_save=50,
+        pretrained_input=False,
     ):
         self.epochs = epochs
         self.epoch_offset = epoch_offset
@@ -35,6 +37,7 @@ class WDNet(object):
         self.gpu_mode = gpu_mode
         self.train_data_loader = train_data_loader
         self.val_data_loader = val_data_loader
+        self.test_data_loader = test_data_loader
         self.last_log_time = time.time()
         self.log_interval_second = log_interval_second
         self.eval_samples_to_save = eval_samples_to_save
@@ -88,15 +91,18 @@ class WDNet(object):
         print('training start!')
         self.vgg.eval()
         writer = SummaryWriter(log_dir='log')
-        iter_all = 0
+        dataloader_length = len(self.train_data_loader)
 
         for epoch in range(self.epochs):
             self.d.train()
             self.g.train()
             epoch += self.epoch_offset
+            offset_point = epoch*dataloader_length
             print(f"start training epoch {epoch}")
+
             for i, (x_, y_, mask, balance, alpha, w) in enumerate(tqdm(self.train_data_loader)):
                 write_log = self.do_logging()
+                i_point = offset_point + i
                 if self.gpu_mode:
                     x_, y_, mask, balance, alpha, w = x_.cuda(), y_.cuda(), mask.cuda(), balance.cuda(), alpha.cuda(), w.cuda()
 
@@ -146,18 +152,17 @@ class WDNet(object):
                     self.grad_scaler_discriminator.step(self.d_optimizer)
                     self.grad_scaler_discriminator.update()
                     if write_log:
-                        writer.add_scalar('gans/d_loss', d_loss.data, iter_all)
+                        writer.add_scalar('gans/d_loss', d_loss.data, i_point)
 
-                iter_all += 1
                 if write_log:
-                    writer.add_scalar('gans/g_loss', g_loss.data, iter_all)
-                    writer.add_scalar('gans/g_loss_all', g_loss_all.data, iter_all)
-                    writer.add_scalar('image/w_loss', w_loss, iter_all)
-                    writer.add_scalar('image/alpha_loss', alpha_loss, iter_all)
-                    writer.add_scalar('image/mask_loss', mask_loss, iter_all)
-                    writer.add_scalar('image/i_watermark_loss', i_watermark_loss, iter_all)
-                    writer.add_scalar('image/i_watermark2_loss', i_watermark2_loss, iter_all)
-                    writer.add_scalar('vgg/vgg_loss', vgg_loss, iter_all)
+                    writer.add_scalar('gans/g_loss', g_loss.data, i_point)
+                    writer.add_scalar('gans/g_loss_all', g_loss_all.data, i_point)
+                    writer.add_scalar('image/w_loss', w_loss, i_point)
+                    writer.add_scalar('image/alpha_loss', alpha_loss, i_point)
+                    writer.add_scalar('image/mask_loss', mask_loss, i_point)
+                    writer.add_scalar('image/i_watermark_loss', i_watermark_loss, i_point)
+                    writer.add_scalar('image/i_watermark2_loss', i_watermark2_loss, i_point)
+                    writer.add_scalar('image/vgg_loss', vgg_loss, i_point)
 
                 if ((i+1)%200) == 0:
                     self.save_sample('train', epoch, i, (y_, mask, alpha, w, x_), (g_, g_mask, g_alpha, g_w, i_watermark))
@@ -168,6 +173,14 @@ class WDNet(object):
             print(f"start evaluate for epoch {epoch}")
             self.g.eval()
             self.d.eval()
+            g_loss_arr = list()
+            g_loss_all_arr = list()
+            w_loss_arr = list()
+            alpha_loss_arr = list()
+            mask_loss_arr = list()
+            i_watermark_loss_arr = list()
+            i_watermark2_loss_arr = list()
+            vgg_loss_arr = list()
             for i, (x_, y_, mask, balance, alpha, w) in enumerate(tqdm(self.val_data_loader)):
                 if self.gpu_mode:
                     x_, y_, mask, balance, alpha, w = x_.cuda(), y_.cuda(), mask.cuda(), balance.cuda(), alpha.cuda(), w.cuda()
@@ -193,20 +206,67 @@ class WDNet(object):
 
                     g_loss_all = g_loss + 10.0*mask_loss + 10.0*w_loss + 10.0*alpha_loss + 50.0*(0.7*i_watermark2_loss + 0.3*i_watermark_loss) + 0.01*vgg_loss
 
-                    writer.add_scalar('eval/g_loss', g_loss.data, epoch)
-                    writer.add_scalar('eval/g_loss_all', g_loss_all.data, epoch)
-                    writer.add_scalar('eval/w_loss', w_loss, epoch)
-                    writer.add_scalar('eval/alpha_loss', alpha_loss, epoch)
-                    writer.add_scalar('eval/mask_loss', mask_loss, epoch)
-                    writer.add_scalar('eval/i_watermark_loss', i_watermark_loss, epoch)
-                    writer.add_scalar('eval/i_watermark2_loss', i_watermark2_loss, epoch)
-                    writer.add_scalar('eval/vgg_loss', vgg_loss, epoch)
+                    g_loss_arr.append(g_loss)
+                    g_loss_all_arr.append(g_loss_all)
+                    w_loss_arr.append(w_loss)
+                    alpha_loss_arr.append(alpha_loss)
+                    mask_loss_arr.append(mask_loss)
+                    i_watermark_loss_arr.append(i_watermark_loss)
+                    i_watermark2_loss_arr.append(i_watermark2_loss)
+                    vgg_loss_arr.append(vgg_loss)
 
                 if i < self.eval_samples_to_save:
                     self.save_sample('eval', epoch, i, (y_, mask, alpha, w, x_), (g_, g_mask, g_alpha, g_w, i_watermark))
 
+            samples = len(self.val_data_loader)
+            writer.add_scalar('eval/g_loss', sum(g_loss_arr)/samples, epoch)
+            writer.add_scalar('eval/g_loss_all', sum(g_loss_all_arr)/samples, epoch)
+            writer.add_scalar('eval/w_loss', sum(w_loss_arr)/samples, epoch)
+            writer.add_scalar('eval/alpha_loss', sum(alpha_loss_arr)/samples, epoch)
+            writer.add_scalar('eval/mask_loss', sum(mask_loss_arr)/samples, epoch)
+            writer.add_scalar('eval/i_watermark_loss', sum(i_watermark_loss_arr)/samples, epoch)
+            writer.add_scalar('eval/i_watermark2_loss', sum(i_watermark2_loss_arr)/samples, epoch)
+            writer.add_scalar('eval/vgg_loss', sum(vgg_loss_arr)/samples, epoch)
+
             print(f"done evaluation for epoch {epoch}")
+            print(f"generating test samples for epoch {epoch}")
+
+            self.save_test_images('test', epoch)
+
+            print(f"done generating test samples for epoch {epoch}")
             print('='*50)
+
+    def save_test_images(self, folder, epoch):
+        all_output = list()
+        for x in tqdm(self.test_data_loader):
+            if self.gpu_mode:
+                x = x.cuda()
+            with torch.no_grad():
+                g_, g_mask, g_alpha, g_w, i_watermark = self.g(x)
+
+            batchsize = g_.shape[0]
+            for i in range(batchsize):
+                output_images = list()
+                for item in [x, g_, g_mask]:
+                    tmp = item[i]
+                    tmp *= 255.0
+                    tmp = tmp.detach().cpu().numpy()
+                    tmp = tmp.astype(np.uint8)
+                    if tmp.shape[0] == 1:
+                        tmp = np.repeat(tmp, 3, axis=0)
+                    tmp = np.transpose(tmp, (1,2,0))
+                    output_images.append(tmp)
+                output_images = np.concatenate(output_images, axis=1)
+                all_output.append(output_images)
+
+        fmt = 'epoch_%d'
+        folder = os.path.join(self.root_save_dir, folder, fmt%epoch)
+        pathlib.Path(folder).mkdir(parents=True, exist_ok=True)
+        filename_fmt = '%d.jpg'
+        for i, image in enumerate(tqdm(all_output)):
+            image = Image.fromarray(image)
+            save_path = os.path.join(folder, filename_fmt%i)
+            image.save(save_path)
 
     def save_sample(self, folder, epoch, idx, x, y):
         fmt = 'epoch_%d'

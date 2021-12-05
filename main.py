@@ -1,6 +1,6 @@
 import os, torch
 from WDNet import WDNet
-from dataset import PathDataset
+from dataset import PathDataset, ArrayDataset
 from torch.utils.data import DataLoader
 import pickle
 import numpy as np
@@ -8,12 +8,13 @@ from PIL import Image
 import io
 import cv2
 from functools import partial
+from torchvision import transforms
 
-def get_all_data_paths(path):
+def get_all_data_paths(path, ext):
 	lst = list()
 	for file_name in os.listdir(path):
 		segments = file_name.split('.')
-		if segments[1] != 'pkl':
+		if segments[1] != ext:
 			continue
 		lst.append(os.path.join(path, file_name))
 	return lst
@@ -32,25 +33,19 @@ def _process_data_file(fd, imagesize):
     mask = np.expand_dims(mask, axis=2)
     alpha_mask = np.expand_dims(alpha_mask, axis=2)
     balanced_mask = np.expand_dims(balanced_mask, axis=2)
-    plain_image = np.array(Image.open(io.BytesIO(data['plain_image_bytes'])))/255.0
-    watermarked_image = np.array(Image.open(io.BytesIO(data['watermarked_image_bytes'])))/255.0
-    watermark_on_image = np.array(Image.open(io.BytesIO(data['watermark_on_image_bytes'])))/255.0
+    plain_image = Image.open(io.BytesIO(data['plain_image_bytes']))
+    watermarked_image = Image.open(io.BytesIO(data['watermarked_image_bytes']))
+    watermark_on_image = Image.open(io.BytesIO(data['watermark_on_image_bytes']))
 
-    mask = np.transpose(mask, (2,0,1))
-    alpha_mask = np.transpose(alpha_mask, (2,0,1))
-    balanced_mask = np.transpose(balanced_mask, (2,0,1))
-    plain_image = np.transpose(plain_image, (2,0,1))
-    watermarked_image = np.transpose(watermarked_image, (2,0,1))
-    watermark_on_image = np.transpose(watermark_on_image, (2,0,1))
-
+    transformation = transforms.ToTensor()
     output = {
-        'plain_image': torch.from_numpy(plain_image).float(),
-        'watermarked_image': torch.from_numpy(watermarked_image).float(),
-        'watermark_on_image': torch.from_numpy(watermark_on_image).float(),
+        'plain_image': transformation(plain_image),
+        'watermarked_image': transformation(watermarked_image),
+        'watermark_on_image': transformation(watermark_on_image),
         'alpha': data['alpha'],
-        'mask': torch.from_numpy(mask).float(),
-        'alpha_mask': torch.from_numpy(alpha_mask).float(),
-        'balanced_mask': torch.from_numpy(balanced_mask).float(),
+        'mask': transformation(mask),
+        'alpha_mask': transformation(alpha_mask),
+        'balanced_mask': transformation(balanced_mask),
     }
     return output
 
@@ -93,12 +88,12 @@ def get_config():
     epoch_offset = int(epoch_offset) if epoch_offset is not None else default_epoch_offset
     config['epoch_offset'] = epoch_offset
 
-    default_batchsize = 3
+    default_batchsize = 10
     batchsize = os.getenv('LMR_BATCHSIZE')
     batchsize = int(batchsize) if batchsize is not None else default_batchsize
     config['batchsize'] = batchsize
 
-    default_imagesize = 480
+    default_imagesize = 256
     imagesize = os.getenv('LMR_IMAGESIZE')
     imagesize = int(imagesize) if imagesize is not None else default_imagesize
     config['imagesize'] = imagesize
@@ -111,17 +106,24 @@ def main():
     root_data_path = config['root_data_path']
     batchsize = config['batchsize']
 
-    train_lst = get_all_data_paths(os.path.join(root_data_path, 'train'))
-    val_lst = get_all_data_paths(os.path.join(root_data_path, 'val'))
+    train_lst = get_all_data_paths(os.path.join(root_data_path, 'train'), 'pkl')
+    val_lst = get_all_data_paths(os.path.join(root_data_path, 'val'), 'pkl')
+    test_lst = get_all_data_paths(os.path.join(root_data_path, 'test_real'), 'jpg')
+
+    transformation = transforms.ToTensor()
+    all_test_images = [x for x in map(lambda imgpath: transformation(Image.open(imgpath)), test_lst)]
+
     train_dataset = PathDataset(train_lst, partial(process_data, imagesize))
     val_dataset = PathDataset(val_lst, partial(process_data, imagesize))
+    test_dataset = ArrayDataset(all_test_images, None)
     params = {
         'batch_size': batchsize,
         'shuffle': True,
         'num_workers': 4,
-        'drop_last': True,
+        'drop_last': False,
     }
     train_dataloader, val_dataloader = DataLoader(train_dataset, **params), DataLoader(val_dataset, **params)
+    test_dataloader = DataLoader(test_dataset, batch_size=1, shuffle=False, num_workers=1)
 
     net_params = {
         'epochs': config['epochs'],
@@ -133,6 +135,7 @@ def main():
     gan = WDNet(
         train_dataloader,
         val_dataloader,
+        test_dataloader,
         **net_params,
     )
 
