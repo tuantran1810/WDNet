@@ -10,13 +10,13 @@ import pickle
 import pathlib
 from sklearn.model_selection import train_test_split
 
-train_samples = 80000
-val_samples = 2000
-test_samples = 2000
+train_samples = 20000
+val_samples = 1000
+test_samples = 1000
 image_size = 256
-root_logo = '/media/tuantran/raid-data/dataset/chotot/chotot_logo'
+root_logo = '/media/tuantran/raid-data/dataset/chotot/chotot_logo_train'
 root_dataset = '/media/tuantran/raid-data/dataset/chotot/chotot_images/images'
-output_path = '/media/tuantran/rapid-data/chotot_watermark_removal'
+output_path = '/media/tuantran/rapid-data/chotot_watermark_removal_small'
 
 img_path = osp.join(root_dataset,'%s.jpg')
 logo_path = osp.join(root_logo, '%s.png')
@@ -88,7 +88,7 @@ def process_and_save(idx, image_id, logo_id, folder):
 	plain_image = Image.open(img_path%image_id)
 	plain_image = plain_image.resize((image_w, image_h))
 
-	alpha = random.random()*0.3 + 0.2
+	alpha = random.random()*0.5 + 0.2
 	logo_angle = random.randint(0,360)
 	logo = logo_images[logo_id]
 	logo_rotate = logo.rotate(logo_angle, expand = True)

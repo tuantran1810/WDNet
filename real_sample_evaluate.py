@@ -21,31 +21,34 @@ def get_all_data_paths(path):
 
 def main():
     batchsize = 1
-    model_path1 = './output/models/epoch_51/g.pkl'
-    model_path2 = './output/models/epoch_51/g.pkl'
-    image_path = './samples/input_images/bds'
+    model_path = './output/models/epoch_60/g.pkl'
+    image_path = './samples/input_images/homedy'
     output_path = './samples/output_images'
 
-    print("loading generator")
-    g1 = generator(3)
-    g_tmp = torch.load(model_path1)
-    g1.load_state_dict(g_tmp)
-    g1 = g1.cuda()
-    g1.eval()
-
-    g2 = generator(3)
-    g_tmp = torch.load(model_path2)
-    g2.load_state_dict(g_tmp)
-    g2 = g2.cuda()
-    g2.eval()
+    g = generator(3)
+    g_tmp = torch.load(model_path)
+    g.load_state_dict(g_tmp)
+    g = g.cuda()
+    g.eval()
 
     print("loading sample images")
     image_paths = get_all_data_paths(image_path)
     all_images = list()
     transformation = transforms.ToTensor()
-    for image_path in image_paths[:160]:
+    for image_path in image_paths:
         image = Image.open(image_path)
-        image = image.resize((1024,1024))
+        w, h = image.size
+        maxwh = max(w, h)
+        if maxwh > 768:
+            ratio = 768/maxwh
+            if w > h:
+                w = 768
+                h = int(ratio*h)
+            else:
+                h = 768
+                w = int(ratio*w)
+        image = image.convert('RGB')
+        image = image.resize((w,h))
         all_images.append(transformation(image))
 
     dataset = ArrayDataset(all_images, None)
@@ -62,9 +65,7 @@ def main():
     for x in tqdm(dataloader):
         x = x.cuda()
         with torch.no_grad():
-            g_, g_mask, g_alpha, g_w, i_watermark = g2(x)
-            # g_, g_mask, g_alpha, g_w, i_watermark = g2(g_)
-            # g_, g_mask, g_alpha, g_w, i_watermark = g1(g_)
+            g_, g_mask, g_alpha, g_w, i_watermark = g(x)
         batchsize = g_.shape[0]
         for i in range(batchsize):
             output_images = list()

@@ -63,7 +63,7 @@ def process_data(imagesize, fd):
 def get_config():
     config = dict()
 
-    default_root_data_path = '/media/tuantran/rapid-data/chotot_watermark_removal'
+    default_root_data_path = '/media/tuantran/rapid-data/chotot_watermark_removal_small'
     root_data_path = os.getenv('LMR_ROOT_DATA_PATH')
     root_data_path = root_data_path if root_data_path is not None else default_root_data_path
     config['root_data_path'] = root_data_path
@@ -111,7 +111,7 @@ def main():
     test_lst = get_all_data_paths(os.path.join(root_data_path, 'test_real'), 'jpg')
 
     transformation = transforms.ToTensor()
-    all_test_images = [x for x in map(lambda imgpath: transformation(Image.open(imgpath)), test_lst)]
+    all_test_images = [x for x in map(lambda imgpath: transformation(Image.open(imgpath).convert('RGB').resize((768,768))), test_lst)]
 
     train_dataset = PathDataset(train_lst, partial(process_data, imagesize))
     val_dataset = PathDataset(val_lst, partial(process_data, imagesize))
